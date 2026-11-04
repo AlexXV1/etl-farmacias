@@ -1,0 +1,32 @@
+# Secretos y configuración local (NUNCA a Git)
+.env
+*.env.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Airflow / runtime: los logs se generan en cada ejecución
+logs/*
+!logs/.gitkeep
+config/airflow.cfg
+airflow.db
+*.pid
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Entregables generados
+*.zip
+
+# Se generan al ejecutar o se entregan por separado
+evidence/
+entregables/
+*.docx
+*.pptx
+*.pdf

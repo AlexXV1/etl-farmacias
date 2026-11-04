@@ -1,0 +1,7 @@
+# Dependencias del código ETL (src/).
+# Versiones fijadas a las que trae la imagen oficial apache/airflow:3.3.2-python3.12
+# (verificado con: docker run --rm --entrypoint python apache/airflow:3.3.2-python3.12
+#  -c "import requests, psycopg; print(requests.__version__, psycopg.__version__)").
+# Así el .venv local y los contenedores ejecutan exactamente las mismas versiones.
+requests==2.34.2
+psycopg[binary]==3.3.5

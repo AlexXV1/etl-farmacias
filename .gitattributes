@@ -1,0 +1,6 @@
+# Archivos que se ejecutan dentro de contenedores Linux: siempre LF.
+# Si Windows les pone CRLF, bash falla con errores como "$'\r': command not found".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.sql text eol=lf
+*.py text eol=lf

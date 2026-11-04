@@ -1,0 +1,8 @@
+{
+  "minsal_locales_url": "https://midas.minsal.cl/farmacia_v2/WS/getLocales.php",
+  "minsal_turnos_url": "https://midas.minsal.cl/farmacia_v2/WS/getLocalesTurnos.php",
+  "dpa_comunas_url": "https://rest-sit.mop.gob.cl/arcgis/rest/services/INTEROP/SERVICIO_DPA/MapServer/1",
+  "dpa_comunas_url_respaldo": "https://geoportal.subpesca.cl/server/rest/services/Hosted/COMUNA/FeatureServer/0",
+  "dpa_page_size": "100",
+  "http_timeout_s": "60"
+}

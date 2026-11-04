@@ -1,0 +1,152 @@
+# Entorno local del proyecto ETL Farmacias Chile.
+# Basado en el docker-compose oficial de Apache Airflow 3.3.2
+# (https://airflow.apache.org/docs/apache-airflow/3.3.2/docker-compose.yaml), con estos cambios:
+#   - LocalExecutor: se eliminan redis, airflow-worker, flower y la config de Celery (menos memoria).
+#   - Sin airflow-triggerer: los DAGs no usan operadores diferibles.
+#   - Sin DAGs de ejemplo y sin credenciales por defecto: todo sale de .env con ${VAR:?}.
+#   - PostgreSQL aloja dos bases: 'airflow' (metadatos) y 'farmacias' (datos del proyecto).
+#   - Puertos publicados solo en 127.0.0.1 (no se exponen a la red).
+#   - El código del proyecto (src/, sql/) se monta en /opt/airflow/project.
+---
+name: etl_farmacias_final
+
+x-airflow-common:
+  &airflow-common
+  # La imagen oficial ya trae requests y psycopg 3 (ver requirements.txt): no se construye imagen propia.
+  image: apache/airflow:3.3.2-python3.12
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres/${POSTGRES_DB:?}
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:?}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: 'America/Santiago'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?}
+    AIRFLOW__API_AUTH__JWT_ISSUER: etl_farmacias
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: '30'
+    PYTHONPATH: /opt/airflow/project
+    PROJECT_SQL_DIR: /opt/airflow/project/sql
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./src:/opt/airflow/project/src
+    - ./sql:/opt/airflow/project/sql
+    # La tarea exportar_evidencia de calcular_indicadores escribe aquí la foto de cada día.
+    - ./evidence:/opt/airflow/project/evidence
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      FARMACIAS_DB_NAME: ${FARMACIAS_DB_NAME:?}
+      FARMACIAS_DB_USER: ${FARMACIAS_DB_USER:?}
+      FARMACIAS_DB_PASSWORD: ${FARMACIAS_DB_PASSWORD:?}
+      TZ: America/Santiago
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${FARMACIAS_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -v -p /opt/airflow/{logs,dags,config}
+        /entrypoint airflow version
+        /entrypoint airflow config list >/dev/null
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,config}
+        # Variables de Airflow del proyecto (URLs de las APIs). Editables luego desde la UI.
+        /entrypoint airflow variables import --action-on-existing-key skip /opt/airflow/config/variables.json
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:?}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?}
+    user: "0:0"
+
+  airflow-cli:
+    <<: *airflow-common
+    profiles:
+      - debug
+    environment:
+      <<: *airflow-common-env
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    command:
+      - bash
+      - -c
+      - airflow
+
+volumes:
+  postgres-db-volume:
